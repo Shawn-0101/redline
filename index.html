@@ -3,48 +3,77 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Redline v1</title>
+  <title>Redline v2</title>
 </head>
 <body>
-  <h1>Redline v1</h1>
+  <h1>Redline v2</h1>
   <p>Ping: <span id="ping">--</span> ms</p>
   <p>Download: <span id="speed">--</span> Mbps</p>
+  <p>Average: <span id="avg">--</span> Mbps</p>
   <button id="go">Start</button>
   <p id="status"></p>
 
   <script>
-    // Cloudflare's free endpoint: hands back however many bytes you ask for
     const URL = 'https://speed.cloudflare.com/__down?bytes=';
+    const TEST_MS = 10000;   // test length
+    const STREAMS = 4;       // parallel downloads
+    const WINDOW_MS = 700;   // live speed looks at the last 0.7s
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     async function testPing() {
       const times = [];
       for (let i = 0; i < 5; i++) {
         const start = performance.now();
-        // ask for 0 bytes, so we only time the round trip
-        // cache: 'no-store' stops the browser reusing an old response
         await fetch(URL + '0', { cache: 'no-store' });
         times.push(performance.now() - start);
       }
       times.sort((a, b) => a - b);
-      return times[2]; // median, ignores one-off spikes
+      return times[2]; // median
     }
 
     async function testDownload() {
-      const start = performance.now();
-      const res = await fetch(URL + '25000000', { cache: 'no-store' }); // 25 MB
-      const reader = res.body.getReader(); // read the file chunk by chunk as it arrives
-
+      const ctrl = new AbortController(); // lets us cancel all downloads at once
       let bytes = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.length;
 
-        // live speed so far: bytes -> bits, divide by seconds, then by a million
-        const seconds = (performance.now() - start) / 1000;
-        const mbps = (bytes * 8) / seconds / 1_000_000;
-        document.getElementById('speed').textContent = mbps.toFixed(1);
+      // one stream: keep downloading 25 MB chunks until we cancel
+      async function stream() {
+        while (!ctrl.signal.aborted) {
+          try {
+            const res = await fetch(URL + '25000000', { cache: 'no-store', signal: ctrl.signal });
+            const reader = res.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              bytes += value.length;
+            }
+          } catch (err) {
+            if (ctrl.signal.aborted) return; // cancelled, all good
+            await sleep(250);                // network hiccup, retry
+          }
+        }
       }
+
+      // every 120ms, work out speed over the last 0.7s
+      const history = [[performance.now(), 0]];
+      const timer = setInterval(() => {
+        const now = performance.now();
+        history.push([now, bytes]);
+        while (now - history[0][0] > WINDOW_MS) history.shift();
+        const [t0, b0] = history[0];
+        const mbps = (bytes - b0) * 8 / ((now - t0) / 1000) / 1e6;
+        document.getElementById('speed').textContent = mbps.toFixed(1);
+      }, 120);
+
+      const start = performance.now();
+      const running = Array.from({ length: STREAMS }, stream);
+      await sleep(TEST_MS);
+      ctrl.abort();
+      clearInterval(timer);
+      await Promise.allSettled(running);
+
+      // average over the whole test
+      return bytes * 8 / ((performance.now() - start) / 1000) / 1e6;
     }
 
     document.getElementById('go').addEventListener('click', async () => {
@@ -53,11 +82,11 @@
       btn.disabled = true;
       try {
         status.textContent = 'Testing ping...';
-        const ping = await testPing();
-        document.getElementById('ping').textContent = Math.round(ping);
+        document.getElementById('ping').textContent = Math.round(await testPing());
 
         status.textContent = 'Testing download...';
-        await testDownload();
+        const avg = await testDownload();
+        document.getElementById('avg').textContent = avg.toFixed(1);
         status.textContent = 'Done';
       } catch (err) {
         status.textContent = 'Test failed: ' + err.message;
