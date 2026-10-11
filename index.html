@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Redline v2</title>
+  <title>Redline v3</title>
 </head>
 <body>
-  <h1>Redline v2</h1>
+  <h1>Redline v3</h1>
+  <canvas id="gauge" width="400" height="400"></canvas>
   <p>Ping: <span id="ping">--</span> ms</p>
   <p>Download: <span id="speed">--</span> Mbps</p>
   <p>Average: <span id="avg">--</span> Mbps</p>
@@ -15,12 +16,98 @@
 
   <script>
     const URL = 'https://speed.cloudflare.com/__down?bytes=';
-    const TEST_MS = 10000;   // test length
-    const STREAMS = 4;       // parallel downloads
-    const WINDOW_MS = 700;   // live speed looks at the last 0.7s
+    const TEST_MS = 10000;
+    const STREAMS = 4;
+    const WINDOW_MS = 700;
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    // ---------- gauge ----------
+    const canvas = document.getElementById('gauge');
+    const ctx = canvas.getContext('2d');
+
+    const START = Math.PI * 0.75;  // where the scale starts (bottom left)
+    const SWEEP = Math.PI * 1.5;   // 270 degrees of scale
+    const MAX = 1000;              // top of the scale in Mbps
+    const LABELS = [0, 1, 5, 10, 50, 100, 500, 1000];
+
+    let target = 0;  // speed we're heading to
+    let shown = 0;   // speed the needle is at right now
+
+    // log scale so 5 Mbps and 500 Mbps both fit nicely
+    const toFrac = mbps => Math.log10(1 + mbps) / Math.log10(1 + MAX);
+    const toAngle = mbps => START + toFrac(Math.min(mbps, MAX)) * SWEEP;
+
+    function drawGauge() {
+      const w = canvas.width, cx = w / 2, cy = w / 2, r = w * 0.45;
+      ctx.clearRect(0, 0, w, w);
+
+      // face
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#111';
+      ctx.fill();
+
+      // scale track
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.85, START, START + SWEEP);
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = r * 0.06;
+      ctx.stroke();
+
+      // red zone at the top end
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.85, toAngle(500), START + SWEEP);
+      ctx.strokeStyle = '#d33';
+      ctx.stroke();
+
+      // ticks + labels
+      ctx.fillStyle = '#eee';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `${r * 0.1}px sans-serif`;
+      for (const v of LABELS) {
+        const a = toAngle(v);
+        // cos/sin turn an angle into an x/y point on the circle
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * r * 0.78, cy + Math.sin(a) * r * 0.78);
+        ctx.lineTo(cx + Math.cos(a) * r * 0.92, cy + Math.sin(a) * r * 0.92);
+        ctx.strokeStyle = '#eee';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.fillText(v, cx + Math.cos(a) * r * 0.62, cy + Math.sin(a) * r * 0.62);
+      }
+
+      // needle
+      const a = toAngle(shown);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(a) * r * 0.9, cy + Math.sin(a) * r * 0.9);
+      ctx.strokeStyle = '#f50';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      // centre cap + readout
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.08, 0, Math.PI * 2);
+      ctx.fillStyle = '#444';
+      ctx.fill();
+      ctx.fillStyle = '#eee';
+      ctx.font = `${r * 0.16}px sans-serif`;
+      ctx.fillText(shown.toFixed(1), cx, cy + r * 0.45);
+      ctx.font = `${r * 0.07}px sans-serif`;
+      ctx.fillText('Mbps', cx, cy + r * 0.6);
+    }
+
+    // runs every frame (~60 times a second)
+    function animate() {
+      shown += (target - shown) * 0.1; // move 10% of the way each frame = smooth ease
+      drawGauge();
+      requestAnimationFrame(animate);
+    }
+    animate();
+
+    // ---------- speed test (same as v2) ----------
     async function testPing() {
       const times = [];
       for (let i = 0; i < 5; i++) {
@@ -29,14 +116,13 @@
         times.push(performance.now() - start);
       }
       times.sort((a, b) => a - b);
-      return times[2]; // median
+      return times[2];
     }
 
     async function testDownload() {
-      const ctrl = new AbortController(); // lets us cancel all downloads at once
+      const ctrl = new AbortController();
       let bytes = 0;
 
-      // one stream: keep downloading 25 MB chunks until we cancel
       async function stream() {
         while (!ctrl.signal.aborted) {
           try {
@@ -48,13 +134,12 @@
               bytes += value.length;
             }
           } catch (err) {
-            if (ctrl.signal.aborted) return; // cancelled, all good
-            await sleep(250);                // network hiccup, retry
+            if (ctrl.signal.aborted) return;
+            await sleep(250);
           }
         }
       }
 
-      // every 120ms, work out speed over the last 0.7s
       const history = [[performance.now(), 0]];
       const timer = setInterval(() => {
         const now = performance.now();
@@ -63,6 +148,7 @@
         const [t0, b0] = history[0];
         const mbps = (bytes - b0) * 8 / ((now - t0) / 1000) / 1e6;
         document.getElementById('speed').textContent = mbps.toFixed(1);
+        target = mbps; // needle follows the live speed
       }, 120);
 
       const start = performance.now();
@@ -72,7 +158,6 @@
       clearInterval(timer);
       await Promise.allSettled(running);
 
-      // average over the whole test
       return bytes * 8 / ((performance.now() - start) / 1000) / 1e6;
     }
 
@@ -80,6 +165,7 @@
       const btn = document.getElementById('go');
       const status = document.getElementById('status');
       btn.disabled = true;
+      target = 0;
       try {
         status.textContent = 'Testing ping...';
         document.getElementById('ping').textContent = Math.round(await testPing());
@@ -87,9 +173,11 @@
         status.textContent = 'Testing download...';
         const avg = await testDownload();
         document.getElementById('avg').textContent = avg.toFixed(1);
+        target = 0; // drop the needle back down
         status.textContent = 'Done';
       } catch (err) {
         status.textContent = 'Test failed: ' + err.message;
+        target = 0;
       }
       btn.disabled = false;
     });
