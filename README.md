@@ -2,14 +2,14 @@
 
 A Wi-Fi speed test that will eventually look and sound like a supercar dashboard.
 
-This is **v3**: a speed tester with a live gauge, in a single HTML file. No styling, no frameworks, no installs.
+This is **v4**: a speed tester with a rev counter and gearbox, in a single HTML file. No styling, no frameworks, no installs.
 
 ## What it does
 
 - Measures **ping** (median of 5 tiny requests)
 - Runs a **10 second download test** over 4 parallel connections
 - Shows **live speed** (last 0.7s) and the **average** for the whole test
-- Draws a **gauge** with a needle that follows the live speed
+- Shows a **rev counter**: speed is mapped to gears 1 to 6 and RPM, with a rev drop on every upshift
 
 ## Run it
 
@@ -41,7 +41,9 @@ speed (Mbps) = bytes downloaded × 8 ÷ seconds ÷ 1,000,000
 - **Download:** 4 downloads run at once and keep restarting for 10 seconds, counting every byte that arrives.
 - **Live speed:** every 120ms, compare the byte count now with 0.7s ago.
 - **Stopping:** an `AbortController` cancels all downloads at once when time is up.
-- **Gauge:** drawn on a `<canvas>` every frame with `requestAnimationFrame`. The scale is logarithmic so slow and fast speeds both fit, and the needle eases 10% of the way to the live speed each frame.
+- **Gauge:** drawn on a `<canvas>` every frame with `requestAnimationFrame`.
+- **Gearbox:** each gear covers a speed range (1st 0–10, 2nd 10–30, 3rd 30–80, 4th 80–200, 5th 200–500, 6th 500+ Mbps). Where you are in that range sets the RPM. Passing the top of a gear shifts up and drops the revs.
+- **Needle:** a simple spring. It's pulled toward the target RPM and slowed by damping, so it overshoots slightly and settles like a real needle.
 
 ## Known limitations
 
@@ -55,7 +57,7 @@ The idea: instead of a plain speedometer, your internet speed drives a car's rev
 - [x] **v1:** Basic ping and download test
 - [x] **v2:** More accurate test: timed run, parallel connections, smoothed live speed
 - [x] **v3:** Rev counter gauge drawn on a canvas, with a needle that follows the speed
-- [ ] **v4:** Gearbox: speed ranges mapped to gears 1 to 6, with rev drops on each shift
+- [x] **v4:** Gearbox: speed ranges mapped to gears 1 to 6, with rev drops on each shift
 - [ ] **v5:** Engine sound that revs with the needle
 - [ ] **v6:** Real recorded engine clips for each gear, upshifts and downshifts
 - [ ] **v7:** Full supercar-style dashboard design with startup sequence, animations, results and run history
