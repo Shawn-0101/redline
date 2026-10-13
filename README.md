@@ -1,5 +1,7 @@
 # Redline
 
+<img width="1901" height="943" alt="image" src="https://github.com/user-attachments/assets/93a95a54-c210-461b-a0ce-6859f75adccc" />
+
 A Wi-Fi speed test that looks and sounds like a supercar dashboard.
 
 This is **v7**: the full supercar-style dashboard. Single HTML file with the audio built in.
